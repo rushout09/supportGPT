@@ -16,6 +16,37 @@ intercom_key = os.getenv('INTERCOM_KEY')
 chat_log_dir = 'chat_logs'
 
 
+def write_to_file(conversation_id: str, conversation: dict):
+    with open(f"{chat_log_dir}/{conversation_id}.jsonl", "a") as outfile:
+        outfile.write(json.dumps(conversation))
+        outfile.write("\r\n")
+
+
+def get_conversation(conversation_id: str, user_message: str):
+    messages = [{"role": "system", "content": "You are a Hevo Data Support Assistant."}]
+    chat_file_path = f"{chat_log_dir}/{conversation_id}.jsonl"
+
+    if os.path.exists(chat_file_path):
+        with open(chat_file_path) as reader:
+            for line in reader:
+                conversation = json.loads(line)
+                messages.append({
+                    "role": "user",
+                    "content": conversation.get("prompt")
+                })
+                messages.append({
+                    "role": "assistant",
+                    "content": conversation.get("completion")
+                })
+        # Todo: summarize prompt if it exceeds 1500 tokens.
+    parsed_user_message = BeautifulSoup(user_message, features="html.parser").get_text()
+    messages.append({
+        "role": "user",
+        "content": parsed_user_message
+    })
+    return messages
+
+
 def post_to_intercom(message, conversation_id):
     request_body = {
         "message_type": "comment",
@@ -35,86 +66,34 @@ def post_to_intercom(message, conversation_id):
     requests.post(url=intercom_reply_url, data=json.dumps(request_body), headers=headers)
 
 
-def gpt3_5_response(data: dict = Body()):
-    user_topic = data.get("topic")
-    conversation_id = data.get("data").get("item").get("id")
-    messages = [{"role": "system", "content": "You are a Hevo Data Support Assistant."}]
-
-    if user_topic == "conversation.user.created":
-        user_message = data.get("data").get("item").get("source").get("body")
-    else:
-        user_message = data.get("data").get("item").get("conversation_parts").get("conversation_parts")[0]. \
-            get("body")
-        with open(f"{chat_log_dir}/{conversation_id}.jsonl") as reader:
-            for line in reader:
-                conversation = json.loads(line)
-                messages.append({
-                    "role": "user",
-                    "content": conversation.get("prompt")
-                })
-                messages.append({
-                    "role": "assistant",
-                    "content": conversation.get("completion")
-                })
-        # Todo: summarize prompt if it exceeds 1500 tokens.
-
-    parsed_user_message = BeautifulSoup(user_message, features="html.parser").get_text()
-    messages.append({
-        "role": "user",
-        "content": parsed_user_message
-    })
+def get_gpt3_5_response(messages: list):
     # Todo: Optimize below hyper-parameters.
     request_body = {
         "model": "gpt-3.5-turbo",
-        "messages": messages
+        "messages": messages,
+        "max_tokens": 200,
+        "temperature": 1
     }
     headers = {
         "Content-Type": "application/json",
         "Authorization": f"Bearer {openai.api_key}"
     }
-    print(json.dumps(request_body))
     openai_chat_completion_url = "https://api.openai.com/v1/chat/completions"
     text_completion_response = requests.post(url=openai_chat_completion_url, data=json.dumps(request_body), headers=headers)
-    print(text_completion_response.text)
     text_completion = text_completion_response.json().get("choices")[0].get("message").get("content")
-
-    conversation = {
-        "prompt": parsed_user_message,
-        "completion": text_completion
-    }
-
-    with open(f"{chat_log_dir}/{conversation_id}.jsonl", "a") as outfile:
-        outfile.write(json.dumps(conversation))
-        outfile.write("\r\n")
-
-    post_to_intercom(message=text_completion, conversation_id=conversation_id)
+    return text_completion
 
 
-def davinci_response(data: dict = Body()):
-    user_topic = data.get("topic")
-    conversation_id = data.get("data").get("item").get("id")
+def get_davinci_response(messages: list):
 
-    prompt = "\n system: " + "You are a HevoData Support Assistant."
-    if user_topic == "conversation.user.created":
-        user_message = data.get("data").get("item").get("source").get("body")
-    else:
-        user_message = data.get("data").get("item").get("conversation_parts").get("conversation_parts")[0]. \
-            get("body")
-        prompt = ""
-        with open(f"{chat_log_dir}/{conversation_id}.jsonl") as reader:
-            for line in reader:
-                conversation = json.loads(line)
-                prompt = prompt + "\n user: " + conversation.get("prompt") + "\n assistant: " + conversation.get("completion")
-        # Todo: summarize prompt if it exceeds 1500 tokens.
-
-    parsed_user_message = BeautifulSoup(user_message, features="html.parser").get_text()
-    prompt = prompt + "\n user: " + parsed_user_message + "\n assistant: "
+    prompt = "".join([f'{message["role"]}: {message["content"]} \n' for message in messages])
+    prompt = prompt + "system: "
     # Todo: Optimize below hyper-parameters.
     request_body = {
         "model": "text-davinci-003",
         "prompt": prompt,
-        "max_tokens": 100,
-        "temperature": 0,
+        "max_tokens": 200,
+        "temperature": 1,
         "top_p": 1,
         "n": 1,
         "stream": False,
@@ -124,23 +103,31 @@ def davinci_response(data: dict = Body()):
         "Content-Type": "application/json",
         "Authorization": f"Bearer {openai.api_key}"
     }
-    print(json.dumps(request_body))
+
     openai_completion_url = "https://api.openai.com/v1/completions"
     text_completion = requests.post(url=openai_completion_url, data=json.dumps(request_body), headers=headers).json().get("choices")[0].get("text")
+    return text_completion
 
-    conversation = {
-        "prompt": parsed_user_message,
-        "completion": text_completion
-    }
 
-    with open(f"{chat_log_dir}/{conversation_id}.jsonl", "a") as outfile:
-        outfile.write(json.dumps(conversation))
-        outfile.write("\r\n")
+def generate_response(data: dict = Body()):
+    conversation_id = data.get("data").get("item").get("id")
 
-    post_to_intercom(message=text_completion, conversation_id=conversation_id)
+    if data.get("topic") == "conversation.user.created":
+        user_message = data.get("data").get("item").get("source").get("body")
+    else:
+        user_message = data.get("data").get("item").get("conversation_parts").get("conversation_parts")[0].get("body")
+
+    messages = get_conversation(conversation_id=conversation_id, user_message=user_message)
+
+    gpt_response = get_gpt3_5_response(messages=messages)
+
+    write_to_file(conversation_id=conversation_id,
+                  conversation={"prompt": messages[-1].get("content"), "completion": gpt_response})
+
+    post_to_intercom(message=gpt_response, conversation_id=conversation_id)
 
 
 @app.post("/", status_code=200)
 async def root(background_tasks: BackgroundTasks, data: dict = Body()):
-    background_tasks.add_task(gpt3_5_response, data=data)
+    background_tasks.add_task(generate_response, data=data)
     return {"success": True}
