@@ -2,9 +2,17 @@ import os
 import json
 import requests
 import openai
+import pandas as pd
+import numpy as np
 from fastapi import FastAPI, Body, BackgroundTasks
+from openai.embeddings_utils import get_embedding, cosine_similarity
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
+
+datafile_path = "data/output.csv"
+
+df = pd.read_csv(datafile_path)
+df["ada_embedding"] = df.embedding.apply(eval).apply(np.array)
 
 app = FastAPI()
 load_dotenv()
@@ -14,6 +22,27 @@ openai.organization = os.getenv('ORG_ID')
 intercom_admin_id = os.getenv('intercom_admin_id')
 intercom_key = os.getenv('INTERCOM_KEY')
 chat_log_dir = 'chat_logs'
+
+
+# search through the reviews for a specific product
+def search_documentation(query, n=3, pprint=True):
+    product_embedding = get_embedding(
+        query,
+        engine="text-embedding-ada-002"
+    )
+    df["similarity"] = df["ada_embedding"].apply(lambda x: cosine_similarity(x, product_embedding))
+
+    results = (
+        df.sort_values("similarity", ascending=False)
+        .head(n)
+        .combined.str.replace("Title: ", "")
+        .str.replace("; Content:", ": ")
+    )
+    if pprint:
+        for r in results:
+            print(r[:200])
+            print()
+    return results.str.cat(sep='\n')
 
 
 def write_to_file(conversation_id: str, conversation: dict):
@@ -38,8 +67,15 @@ def get_conversation(conversation_id: str, user_message: str):
                     "role": "assistant",
                     "content": conversation.get("completion")
                 })
-        # Todo: summarize prompt if it exceeds 1500 tokens.
     parsed_user_message = BeautifulSoup(user_message, features="html.parser").get_text()
+
+    messages.append({
+        "role": "system",
+        "content": search_documentation(parsed_user_message)
+    })
+
+    # Todo: summarize prompt if it exceeds 1500 tokens.
+
     messages.append({
         "role": "user",
         "content": parsed_user_message
@@ -87,7 +123,7 @@ def get_gpt3_5_response(messages: list):
 def get_davinci_response(messages: list):
 
     prompt = "".join([f'{message["role"]}: {message["content"]} \n' for message in messages])
-    prompt = prompt + "system: "
+    prompt = prompt.replace('system:', '', 1) + "assistant: "
     # Todo: Optimize below hyper-parameters.
     request_body = {
         "model": "text-davinci-003",
