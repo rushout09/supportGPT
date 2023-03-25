@@ -19,7 +19,8 @@ intercom_admin_id=
 ```
 3. Create a virtual env and Install the requirements file:
 ```
-python3 -n venv venv
+python3 -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 4. Install cloudflare tunnel to proxy your localhost (Optional)
