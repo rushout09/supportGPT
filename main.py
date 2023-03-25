@@ -12,7 +12,7 @@ from bs4 import BeautifulSoup
 datafile_path = "data/output.csv"
 
 df = pd.read_csv(datafile_path)
-df["ada_embedding"] = df.embedding.apply(eval).apply(np.array)
+df["ada_embedding"] = df["ada_embedding"].apply(eval).apply(np.array)
 
 app = FastAPI()
 load_dotenv()
@@ -40,8 +40,7 @@ def search_documentation(query, n=3, pprint=True):
     )
     if pprint:
         for r in results:
-            print(r[:200])
-            print()
+            print(r)
     return results.str.cat(sep='\n')
 
 
@@ -74,7 +73,7 @@ def get_conversation(conversation_id: str, user_message: str):
         "content": search_documentation(parsed_user_message)
     })
 
-    # Todo: summarize prompt if it exceeds 1500 tokens.
+    # Todo: summarize prompt if it exceeds 3000 tokens.
 
     messages.append({
         "role": "user",
@@ -88,7 +87,7 @@ def post_to_intercom(message, conversation_id):
         "message_type": "comment",
         "type": "admin",
         "admin_id": intercom_admin_id,
-        "body": message
+        "body": message.replace('\n', '<br>')
     }
 
     headers = {
@@ -107,7 +106,7 @@ def get_gpt3_5_response(messages: list):
     request_body = {
         "model": "gpt-3.5-turbo",
         "messages": messages,
-        "max_tokens": 200,
+        "max_tokens": 500,
         "temperature": 1
     }
     headers = {
@@ -128,7 +127,7 @@ def get_davinci_response(messages: list):
     request_body = {
         "model": "text-davinci-003",
         "prompt": prompt,
-        "max_tokens": 200,
+        "max_tokens": 500,
         "temperature": 1,
         "top_p": 1,
         "n": 1,
@@ -152,6 +151,9 @@ def generate_response(data: dict = Body()):
         user_message = data.get("data").get("item").get("source").get("body")
     else:
         user_message = data.get("data").get("item").get("conversation_parts").get("conversation_parts")[0].get("body")
+
+    # if "pass_to_gpt" not in user_message:
+    #     return {"success": True}
 
     messages = get_conversation(conversation_id=conversation_id, user_message=user_message)
 
