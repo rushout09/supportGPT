@@ -26,9 +26,8 @@ intercom_key = os.getenv('INTERCOM_KEY')
 tag_id = "7930796"
 
 chat_log_dir = 'chat_logs'
-GET_DOCUMENTATION = "get_documentation"
-PASS_TO_PERSON = "pass_to_person"
-initial_system_instruction = "You are a friendly Hevo Support Assistant. You should always let user know that " \
+initial_system_instruction = "You are a friendly Hevo Support Assistant. Do not give user incorrect information." \
+                             "You should always let user know that " \
                              "they need to type '0' to reach out to support representative."
 
 
@@ -173,7 +172,7 @@ def get_gpt3_5_response(messages: list):
         "model": "gpt-3.5-turbo",
         "messages": messages,
         "max_tokens": 500,
-        "temperature": 0
+        "temperature": 0.2
     }
     headers = {
         "Content-Type": "application/json",
@@ -181,7 +180,7 @@ def get_gpt3_5_response(messages: list):
     }
     openai_chat_completion_url = "https://api.openai.com/v1/chat/completions"
     text_completion_response = requests.post(url=openai_chat_completion_url, data=json.dumps(request_body),
-                                             headers=headers, timeout=30)
+                                             headers=headers, timeout=60)
 
     print(f"text_completion_response: {text_completion_response}")
     text_completion = text_completion_response.json().get("choices")[0].get("message").get("content")
@@ -240,9 +239,8 @@ def generate_response(conversation_id, user_message):
             "role": "system",
             "content": "Related Docs: "
                        + search_documentation(messages[-1].get("content")) +
-                       "\nYou should always provide documentation link."
-                       "\nYou should always let user know that "
-                       "they need to type '0' in chat window to reach out to support representative."
+                       "\nYou should always provide documentation link.\n" + initial_system_instruction
+
         }
     )
 
